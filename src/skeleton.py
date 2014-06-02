@@ -1,7 +1,8 @@
+from collections import deque
 from visual import *
 import math
 
-class Bone:
+class Bone(object):
     
     def __init__(self, child, parent):
         self.child = child
@@ -19,13 +20,35 @@ class Bone:
         if self.bonesize() != self.fixed_size:
             pass
     
-class Joint:
+class Joint(object):
     
-    def __init__(self, x, y, z, parent):
+    def __init__(self,
+                 name,
+                 parent,
+                 x,
+                 y,
+                 z,
+                 xrotation=0,
+                 yrotation=0,
+                 zrotation=0,
+                 xposition=0,
+                 yposition=0,
+                 zposition=0
+                 ):
         self._x = x
         self._y = y
         self._z = z
+        self._xrotation = xrotation
+        self._yrotation = yrotation
+        self._zrotation = zrotation
+        self._xposition = xposition
+        self._yposition = yposition
+        self._zposition = zposition
+        self.channel_count = 0
+        self.channels = []
+        self.name = name
         self.parent = parent
+        self.childs = []
         
         if self.parent is not None:
             self._x += parent.x
@@ -33,7 +56,7 @@ class Joint:
             self._z += parent.z
             self.parent = parent
             self.parent.update = self.parent_changed
-            
+            self.parent.childs.append(self)
             self.bone = self.create_bone()
         else:
             self.bone = None
@@ -91,15 +114,42 @@ class VisualBone(Bone):
         
     def update(self):
         self.obj.pos = (self.child.x, self.child.y, self.child.z)
-        self.obj.axis = (self.parent.x - self.child.x, self.parent.y - self.child.y, self.parent.z - self.child.z)
+        self.obj.axis = (self.parent.x - self.child.x,
+                         self.parent.y - self.child.y,
+                         self.parent.z - self.child.z)
         
     def draw(self):
         pass
     
 class VisualJoint(Joint):
     
-    def __init__(self, x, y, z, parent, lbl="", radius=0.3):
-        Joint.__init__(self, x, y, z, parent)
+    def __init__(self,
+                 name,
+                 parent,
+                 x=0,
+                 y=0,
+                 z=0,
+                 radius=0.3,
+                 xrotation=0,
+                 yrotation=0,
+                 zrotation=0,
+                 xposition=0,
+                 yposition=0,
+                 zposition=0
+                 ):
+        Joint.__init__(self,
+                 name,
+                 parent,
+                 x,
+                 y,
+                 z,
+                 xrotation,
+                 yrotation,
+                 zrotation,
+                 xposition,
+                 yposition,
+                 zposition
+                )
         self.obj = sphere(pos=(self.x, self.y, self.z), radius=radius, color=color.orange)
         self._label = None
 
@@ -214,29 +264,105 @@ class LeftAnkle(VisualJoint):
         
 class Skeleton(object):
     
-    def __init__(self):
-        self.spine = Spine()
-        self.cshoulder = CentralShoulder(self.spine)
-        self.head = Head(self.cshoulder)
+    def __init__(self, root):
+        self.root = root
+        self.joints = [root]
         
-        self.rshoulder = RightShoulder(self.cshoulder)
-        self.relbow = RightElbow(self.rshoulder)
-        self.rwrist = RightWrist(self.relbow)
+    def add_joint(self, joint):
+        self.joints.append(joint)
 
-        self.lshoulder = LeftShoulder(self.cshoulder)
-        self.lelbow = LeftElbow(self.lshoulder)
-        self.lwrist = LeftWrist(self.lelbow)
+def skeleton_from_bvh(bvh_file):
+    data = open(bvh_file, 'r')
+    
+    skel = None
+    parent = None
+    current_joint = None
+    channels = None
+    offset = None
+    
+    branch = deque()
+    for line in data:
+        tokens = line.strip().upper().split(' ')
+        assert len(tokens) > 0
+        word = tokens[0]
+        del tokens[0]
+
+        if word == '{':
+            continue
+        if word == 'HIERACHY':
+            continue
+        elif word == 'ROOT':
+            current_joint = VisualJoint(tokens[0], None)
+            parent = current_joint
+            skel = Skeleton(current_joint)
+            skel.add_joint(current_joint)
+            branch.append(current_joint)
+        elif word == 'OFFSET':
+            current_joint.x = offset[0]
+            current_joint.y = offset[1]
+            current_joint.z = offset[2]
+        elif word == 'CHANNELS':
+            current_joint.channel_count = tokens[0]
+            currentjoint.channels = [token.lower() for token in tokens[1:]]
+        elif word == 'JOINT':
+            parent = current_joint
+            current_joint = VisualJoint(tokens[0], parent)
+            skel.add_joint(current_joint)
+            branch.append(current_joint)
+        elif word == 'END' and tokens[1] == 'SITE':
+            current_joint = VisualJoint('End Site', parent)
+            skel.add_joint(current_joint)
+            branch.append(current_joint)
+        elif word == '}':
+            parent = current_joint
+            current_joint = branch.pop()
+            if len(branch) == 0:
+                break
+    return skel
         
-        self.pelvis = Pelvis(self.spine)
+def base_skeleton():
+    spine = Spine()
+    cshoulder = CentralShoulder(spine)
+    head = Head(cshoulder)
+            
+    rshoulder = RightShoulder(cshoulder)
+    relbow = RightElbow(rshoulder)
+    rwrist = RightWrist(relbow)
 
-        self.rhip = RightHip(self.pelvis)
-        self.rknee = RightKnee(self.rhip)
-        self.rankle = RightAnkle(self.rknee)
+    lshoulder = LeftShoulder(cshoulder)
+    lelbow = LeftElbow(lshoulder)
+    lwrist = LeftWrist(lelbow)
+            
+    pelvis = Pelvis(spine)
 
-        self.lhip = LeftHip(self.pelvis)
-        self.lknee = LeftKnee(self.lhip)
-        self.lankle = LeftAnkle(self.lknee)
+    rhip = RightHip(pelvis)
+    rknee = RightKnee(rhip)
+    rankle = RightAnkle(rknee)
+
+    lhip = LeftHip(pelvis)
+    lknee = LeftKnee(lhip)
+    lankle = LeftAnkle(lknee)
+
+    sk = Skeleton(spine)
+    sk.add_joint(cshoulder)
+    sk.add_joint(head)
+    sk.add_joint(rshoulder)
+    sk.add_joint(relbow)
+    sk.add_joint(rwrist)
+    sk.add_joint(lshoulder)
+    sk.add_joint(lelbow)
+    sk.add_joint(lwrist)
+    sk.add_joint(pelvis)
+    sk.add_joint(rhip)
+    sk.add_joint(rknee)
+    sk.add_joint(rankle)
+    sk.add_joint(lhip)
+    sk.add_joint(lknee)
+    sk.add_joint(lankle)
+
+    return sk
 
 if __name__ == '__main__':
-    s = Skeleton()    
+    s = skeleton_from_bvh('mocap/back_flip.bvh')
+    #s = base_skeleton()
     
